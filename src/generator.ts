@@ -1,7 +1,6 @@
-import type { CompositeTypeSchema, EnumSchema, GeneratorOptions, ParsedSchema } from './types.js';
+import type { CompositeTypeSchema, DomainSchema, EnumSchema, GeneratorOptions, ParsedSchema, ViewSchema } from './types.js';
 
 const DEFAULT_TYPE_MAP: Record<string, string> = {
-  // Integers & Numbers
   int: 'number',
   int2: 'number',
   int4: 'number',
@@ -23,7 +22,6 @@ const DEFAULT_TYPE_MAP: Record<string, string> = {
   numeric: 'number',
   decimal: 'number',
 
-  // Strings / Text
   text: 'string',
   varchar: 'string',
   char: 'string',
@@ -33,11 +31,9 @@ const DEFAULT_TYPE_MAP: Record<string, string> = {
   bpchar: 'string',
   citext: 'string',
 
-  // Boolean
   bool: 'boolean',
   boolean: 'boolean',
 
-  // Date / Time
   date: 'Date',
   time: 'string',
   timetz: 'string',
@@ -47,11 +43,9 @@ const DEFAULT_TYPE_MAP: Record<string, string> = {
   'timestamp without time zone': 'Date',
   interval: 'string',
 
-  // JSON
   json: 'any',
   jsonb: 'any',
 
-  // Misc
   bytea: 'Buffer',
   inet: 'string',
   cidr: 'string',
@@ -63,6 +57,12 @@ function toPascalCase(str: string): string {
   return str
     .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
     .replace(/^[a-z]/, (chr) => chr.toUpperCase());
+}
+
+// `public` and absent schemas use just the object name; all others prefix with the schema in PascalCase.
+function qualifiedTypeName(name: string, schema: string | undefined, prefix: string, suffix: string): string {
+  const schemaPrefix = schema ? toPascalCase(schema) : '';
+  return `${prefix}${schemaPrefix}${toPascalCase(name)}${suffix}`;
 }
 
 export function generateTypeScript(
@@ -80,77 +80,81 @@ export function generateTypeScript(
     lines.push('');
   }
 
-  // Track known enum names and composite type names for custom type mapping
-  const knownEnums = new Set(schema.enums.map((e: EnumSchema) => e.name));
-  const knownComposites = new Set((schema.compositeTypes || []).map((c: CompositeTypeSchema) => c.name));
+  // Maps "schema.name" -> qualified TS type name for cross-reference resolution.
+  const typeRegistry = new Map<string, string>();
+  const register = (name: string, schemaName: string | undefined) => {
+    const tsName = qualifiedTypeName(name, schemaName, prefix, suffix);
+    typeRegistry.set(name, tsName);
+    if (schemaName) typeRegistry.set(`${schemaName}.${name}`, tsName);
+    return tsName;
+  };
 
-  // 1. Generate Enum Types
-  for (const enumDef of schema.enums) {
-    const enumTypeName = `${prefix}${toPascalCase(enumDef.name)}${suffix}`;
-    const valuesUnion = enumDef.values.map((v: string) => `'${v}'`).join(' | ');
-    lines.push(`export type ${enumTypeName} = ${valuesUnion || 'string'};`);
-    lines.push('');
-  }
+  for (const e of schema.enums) register(e.name, e.schema);
+  for (const c of schema.compositeTypes || []) register(c.name, c.schema);
+  for (const d of schema.domains || []) register(d.name, d.schema);
 
-  // Helper function to resolve PG type to TS type
   function resolveTsType(pgType: string): string {
     const lower = pgType.toLowerCase();
-    if (typeMap[lower]) {
-      return typeMap[lower];
-    }
-    if (knownEnums.has(pgType) || knownComposites.has(pgType)) {
-      return `${prefix}${toPascalCase(pgType)}${suffix}`;
-    }
+    if (typeMap[lower]) return typeMap[lower];
+    if (typeRegistry.has(pgType)) return typeRegistry.get(pgType)!;
     return 'any';
   }
 
-  // 2. Generate Composite Types Interfaces
+  // 1. Enums
+  for (const enumDef of schema.enums) {
+    const typeName = qualifiedTypeName(enumDef.name, enumDef.schema, prefix, suffix);
+    const valuesUnion = enumDef.values.map((v: string) => `'${v}'`).join(' | ');
+    lines.push(`export type ${typeName} = ${valuesUnion || 'string'};`);
+    lines.push('');
+  }
+
+  // 2. Domains
+  for (const domain of schema.domains || []) {
+    const typeName = qualifiedTypeName(domain.name, domain.schema, prefix, suffix);
+    let tsType = resolveTsType(domain.baseType);
+    if (domain.isArray) tsType = `${tsType}[]`;
+    lines.push(`export type ${typeName} = ${tsType};`);
+    lines.push('');
+  }
+
+  // 3. Composite Types
   for (const comp of schema.compositeTypes || []) {
-    const interfaceName = `${prefix}${toPascalCase(comp.name)}${suffix}`;
+    const interfaceName = qualifiedTypeName(comp.name, comp.schema, prefix, suffix);
     lines.push(`export interface ${interfaceName} {`);
     for (const attr of comp.attributes) {
       let tsType = resolveTsType(attr.type);
-      if (attr.isArray) {
-        tsType = `${tsType}[]`;
-      }
+      if (attr.isArray) tsType = `${tsType}[]`;
       lines.push(`  ${attr.name}: ${tsType} | null;`);
     }
     lines.push('}');
     lines.push('');
   }
 
-  // 2. Generate Table Interfaces
+  // 4. Tables
   for (const table of schema.tables) {
-    const interfaceName = `${prefix}${toPascalCase(table.name)}${suffix}`;
-
-    // Base Interface
+    const interfaceName = qualifiedTypeName(table.name, table.schema, prefix, suffix);
     lines.push(`export interface ${interfaceName} {`);
     for (const col of table.columns) {
       let tsType = resolveTsType(col.type);
-      if (col.isArray) {
-        tsType = `${tsType}[]`;
-      }
-      const optional = col.isNullable ? ' | null' : '';
-      lines.push(`  ${col.name}: ${tsType}${optional};`);
+      if (col.isArray) tsType = `${tsType}[]`;
+      const nullable = col.isNullable ? ' | null' : '';
+      lines.push(`  ${col.name}: ${tsType}${nullable};`);
     }
     lines.push('}');
     lines.push('');
 
-    // Optional Insert / Update Helper Types
     if (options.generateInsertUpdateTypes) {
-      const insertName = `${prefix}${toPascalCase(table.name)}Insert${suffix}`;
-      const updateName = `${prefix}${toPascalCase(table.name)}Update${suffix}`;
+      const insertName = qualifiedTypeName(table.name, table.schema, prefix, `Insert${suffix}`);
+      const updateName = qualifiedTypeName(table.name, table.schema, prefix, `Update${suffix}`);
 
       lines.push(`export interface ${insertName} {`);
       for (const col of table.columns) {
         let tsType = resolveTsType(col.type);
-        if (col.isArray) {
-          tsType = `${tsType}[]`;
-        }
+        if (col.isArray) tsType = `${tsType}[]`;
         const isOptional = col.isNullable || col.hasDefault;
         const optFlag = isOptional ? '?' : '';
-        const nullability = col.isNullable ? ' | null' : '';
-        lines.push(`  ${col.name}${optFlag}: ${tsType}${nullability};`);
+        const nullable = col.isNullable ? ' | null' : '';
+        lines.push(`  ${col.name}${optFlag}: ${tsType}${nullable};`);
       }
       lines.push('}');
       lines.push('');
@@ -158,6 +162,19 @@ export function generateTypeScript(
       lines.push(`export type ${updateName} = Partial<${insertName}>;`);
       lines.push('');
     }
+  }
+
+  // 5. Views
+  for (const view of schema.views || []) {
+    const interfaceName = qualifiedTypeName(view.name, view.schema, prefix, suffix);
+    lines.push(`export interface ${interfaceName} {`);
+    for (const col of view.columns) {
+      let tsType = resolveTsType(col.type);
+      if (col.isArray) tsType = `${tsType}[]`;
+      lines.push(`  ${col.name}: ${tsType} | null;`);
+    }
+    lines.push('}');
+    lines.push('');
   }
 
   return lines.join('\n').trim() + '\n';

@@ -5,8 +5,9 @@ Generate TypeScript interfaces directly from PostgreSQL DDL SQL files without da
 ## Features
 
 - **Offline SQL DDL Parsing**: No live Postgres database required.
-- **Modular Schema Files**: Supports `psql` inclusion directives (`\i relative/path.sql` or `\include file.sql`) to resolve modular multi-file schemas.
-- **Supports**: `CREATE TABLE`, `CREATE TYPE ... AS ENUM`, and composite types (`CREATE TYPE ... AS (...)`).
+- **Modular Schema Files**: Supports `psql` inclusion directives (`\i relative/path.sql` or `\include file.sql`).
+- **Full Declarative Object Support**: `CREATE TABLE`, `CREATE TYPE ... AS ENUM`, composite types (`CREATE TYPE ... AS (...)`), `CREATE DOMAIN`, and `CREATE VIEW`.
+- **Schema Qualification**: Strips/handles qualified schema namespaces (e.g. `auth.users` -> `Users`).
 - **Rich Type Mapping**: Native Postgres types, arrays, defaults, nullability, and optional Insert/Update helper types.
 - **CLI & Programmatic API**.
 

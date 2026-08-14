@@ -4,7 +4,7 @@ import { generateTypeScript } from './generator.js';
 import { resolveSqlIncludes } from './resolver.js';
 import type { GeneratorOptions } from './types.js';
 
-export type { ColumnSchema, CompositeTypeSchema, EnumSchema, GeneratorOptions, ParsedSchema, TableSchema } from './types.js';
+export type { ColumnSchema, CompositeTypeSchema, DomainSchema, EnumSchema, GeneratorOptions, ParsedSchema, TableSchema, ViewSchema } from './types.js';
 export { parseSqlSchema } from './parser.js';
 export { generateTypeScript } from './generator.js';
 export { resolveSqlIncludes } from './resolver.js';
