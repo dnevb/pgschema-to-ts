@@ -54,4 +54,7 @@ export interface GeneratorOptions {
   customTypeMap?: Record<string, string>;
   generateInsertUpdateTypes?: boolean;
   generateHeaderBanner?: boolean;
+  datesAsStrings?: boolean;
+  camelCase?: boolean;
+  generateTableConsts?: boolean;
 }
